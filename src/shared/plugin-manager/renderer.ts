@@ -24,6 +24,8 @@ interface IMod {
     updateAllPlugins: () => Promise<void>;
     installPluginFromRemote: (url: string) => Promise<void>,
     installPluginFromLocal: (rawCode: string) => Promise<void>,
+    updateSubscription: (urls: string[]) => Promise<{ started: boolean }>,
+    onUpdateProgress: (callback: (text: string) => void) => () => void,
 }
 
 const mod = window["@shared/plugin-manager" as any] as unknown as IMod;
@@ -124,6 +126,8 @@ const PluginManager = {
     uninstallPlugin: mod.uninstallPlugin,
     installPluginFromRemote: mod.installPluginFromRemote,
     installPluginFromLocal: mod.installPluginFromLocal,
+    updateSubscription: mod.updateSubscription,
+    onUpdateProgress: mod.onUpdateProgress,
 };
 
 export default PluginManager;
