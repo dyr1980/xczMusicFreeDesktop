@@ -22,20 +22,21 @@ jobs:
           retention-days: 30
 
   build-windows:
-    runs-on: windows-latest
+    runs-on: windows-2022
     steps:
       - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
+          node-version: 18
+      - run: npm install
       - name: Read version
         run: |
           $version = node -p "require('./package.json').version"
           echo "VERSION=$version" >> $env:GITHUB_ENV
-      - run: pnpm run package
+      - run: npm run package
       - uses: maotoumao/inno-setup-action-cli@main
         with:
           filepath: ./release/build-windows.iss
@@ -61,15 +62,16 @@ jobs:
           retention-days: 30
 
   build-windows-legacy:
-    runs-on: windows-latest
+    runs-on: windows-2022
     steps:
       - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
-          cache: pnpm
-      - run: pnpm install
+          node-version: 18
+      - run: npm install
       - name: Read version
         run: |
           $version = node -p "require('./package.json').version"
@@ -82,8 +84,8 @@ jobs:
             Copy-Item $_.FullName $target -Force
           }
       - name: Install Electron 22
-        run: pnpm add electron@22 --save-dev
-      - run: pnpm run package
+        run: npm install electron@22 --save-dev
+      - run: npm run package
       - uses: maotoumao/inno-setup-action-cli@main
         with:
           filepath: ./release/build-windows.iss
@@ -109,20 +111,21 @@ jobs:
           retention-days: 30
 
   build-macos-x64:
-    runs-on: macos-13
+    runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
+          node-version: 18
+      - run: npm install
       - name: Read version
         run: |
           VERSION=$(node -p "require('./package.json').version")
           echo "VERSION=$VERSION" >> $GITHUB_ENV
-      - run: pnpm run make
+      - run: npm run make -- --arch=x64
       - name: Rename DMG
         run: mv "./out/make/MusicFree-${{ env.VERSION }}-x64.dmg" "./out/make/MusicFree-${{ env.VERSION }}-darwin-x64.dmg"
       - uses: actions/upload-artifact@v4
@@ -135,17 +138,18 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
+          node-version: 18
+      - run: npm install
       - name: Read version
         run: |
           VERSION=$(node -p "require('./package.json').version")
           echo "VERSION=$VERSION" >> $GITHUB_ENV
-      - run: pnpm run make -- --arch=arm64
+      - run: npm run make -- --arch=arm64
       - name: Rename DMG
         run: mv "./out/make/MusicFree-${{ env.VERSION }}-arm64.dmg" "./out/make/MusicFree-${{ env.VERSION }}-darwin-arm64.dmg"
       - uses: actions/upload-artifact@v4
@@ -159,18 +163,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y rpm
-      - uses: pnpm/action-setup@v4
+        run: sudo apt-get update && sudo apt-get install -y rpm fakeroot
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
+          node-version: 18
+      - run: npm install
       - name: Read version
         run: |
           VERSION=$(node -p "require('./package.json').version")
           echo "VERSION=$VERSION" >> $GITHUB_ENV
-      - run: pnpm run make
+      - run: npm run make
       - name: Rename DEB
         run: |
           DEB_FILE=$(find ./out/make/deb/x64/ -name "*.deb" | head -1)
