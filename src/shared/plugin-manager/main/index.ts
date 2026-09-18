@@ -128,6 +128,9 @@ class PluginManager {
 
             // 后台异步执行，立刻返回
             (async () => {
+                // ⭐ 关键：让出主进程事件循环，保证 ipcMain.handle 立刻返回
+                await new Promise(r => setImmediate(r));
+
                 let successCount = 0;
                 let retrySuccessCount = 0;
                 let failCount = 0;
@@ -137,8 +140,10 @@ class PluginManager {
                 try {
                     send("正在获取订阅清单...");
 
-                    // 读取上次订阅状态
-                    const previousState = this.getSubscriptionState();
+                    // ⭐ 读取上次订阅状态：包在 setImmediate 里，避免同步阻塞
+                    const previousState = await new Promise<Record<string, string[]>>(resolve => {
+                        setImmediate(() => resolve(this.getSubscriptionState()));
+                    });
                     const newState: Record<string, string[]> = {};
                     const remoteUrlSet = new Set<string>();
 
@@ -235,7 +240,12 @@ class PluginManager {
                     }
 
                     // ========== 阶段 4：保存新的订阅状态 ==========
-                    this.setSubscriptionState(newState);
+                    await new Promise<void>(resolve => {
+                        setImmediate(() => {
+                            this.setSubscriptionState(newState);
+                            resolve();
+                        });
+                    });
 
                     // ========== 阶段 5：同步插件列表 ==========
                     this.syncPlugins();
