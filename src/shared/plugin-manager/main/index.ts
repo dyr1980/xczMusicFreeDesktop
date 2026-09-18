@@ -110,6 +110,67 @@ class PluginManager {
             return await this.installPluginFromLocalFile(urlLike);
         });
 
+        // 新增：批量更新订阅，主进程后台执行 + 进度推送
+        ipcMain.handle("@shared/plugin-manager/update-subscription", async (event, subscriptionUrls: string[]) => {
+            const sender = event.sender;
+            const send = (text: string) => {
+                if (!sender.isDestroyed()) {
+                    sender.send("@shared/plugin-manager/update-progress", text);
+                }
+            };
+
+            (async () => {
+                let successCount = 0;
+                let failCount = 0;
+                const failReasons: string[] = [];
+
+                try {
+                    send("正在获取订阅清单...");
+
+                    const allPluginUrls: string[] = [];
+                    for (const subUrl of subscriptionUrls) {
+                        try {
+                            if (subUrl.endsWith(".json")) {
+                                const jsonFile = (await axios.get(addRandomHash(subUrl), {
+                                    timeout: 15000,
+                                })).data;
+                                for (const cfg of jsonFile?.plugins ?? []) {
+                                    allPluginUrls.push(cfg.url);
+                                }
+                            } else if (subUrl.endsWith(".js")) {
+                                allPluginUrls.push(subUrl);
+                            }
+                        } catch (e) {
+                            failReasons.push(`${subUrl}：${(e as Error).message}`);
+                        }
+                    }
+
+                    const uniqueUrls = [...new Set(allPluginUrls)];
+                    const total = uniqueUrls.length;
+                    let completed = 0;
+
+                    for (const url of uniqueUrls) {
+                        try {
+                            await this.installPluginFromUrlImpl(addRandomHash(url));
+                            successCount++;
+                        } catch (e) {
+                            failCount++;
+                            failReasons.push(`${url}：${(e as Error).message}`);
+                        }
+                        completed++;
+                        send(`正在安装 ${completed}/${total} 个插件...`);
+                    }
+
+                    this.syncPlugins();
+                    send(`__DONE__:${JSON.stringify({ successCount, failCount, failReasons })}`);
+                } catch (e) {
+                    send(`__DONE__:${JSON.stringify({ successCount, failCount, failReasons })}`);
+                }
+            })();
+
+            return { started: true };
+        });
+
         // 2. check if folder exists
         let folderExists = true;
         try {
