@@ -56,6 +56,29 @@ export default function PluginManagerView() {
         return { success: false, retried, error: new Error("未知错误") };
     }
 
+    // 下载清单 JSON，解析出所有插件 URL（增加15s超时AbortController）
+    async function fetchPluginListFromManifest(manifestUrl: string): Promise<string[]> {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 15000);
+        try {
+            const res = await fetch(manifestUrl, { signal: controller.signal });
+            if (!res.ok) {
+                throw new Error(`获取订阅清单失败: HTTP ${res.status}`);
+            }
+            const json = await res.json();
+            // 兼容两种格式：{ plugins: [...] } 或直接就是 [...]
+            const plugins = Array.isArray(json) ? json : json?.plugins;
+            if (!Array.isArray(plugins)) {
+                throw new Error("订阅清单格式无效，未找到 plugins 字段");
+            }
+            return plugins
+                .map((p: any) => p?.url)
+                .filter((u: any): u is string => typeof u === "string" && u.length > 0);
+        } finally {
+            clearTimeout(timeoutId);
+        }
+    }
+
     // ============ 核心：读取已保存订阅，一键安装所有插件 ============
     const handleUpdateAllSubscriptions = async () => {
         // 1. 读取用户在“订阅设置”里保存的所有订阅链接
@@ -66,62 +89,85 @@ export default function PluginManagerView() {
         }
 
         setIsUpdating(true);
-        setProgressText(`正在更新 0/${subscription.length} 个订阅源...`);
+        setProgressText(`正在获取订阅清单...`);
 
-        // 2. 并发控制：最多同时请求 4 个订阅源
-        const queue = new PQueue({ concurrency: 4 });
-
-        let successCount = 0;      // 直接成功
-        let retrySuccessCount = 0; // 重试后成功
-        let failCount = 0;         // 最终失败
+        // 统计
+        let successCount = 0;
+        let retrySuccessCount = 0;
+        let failCount = 0;
         const failReasons: string[] = [];
-        const total = subscription.length;
 
-        // 3. 把每个订阅源作为独立任务加入队列
-        subscription.forEach((sub) => {
-            queue.add(async () => {
-                // 调用 PluginManager.installPluginFromRemote(url)
-                // 如果 url 是订阅源 JSON，它会自动解析并安装里面所有插件
-                const result = await installWithRetry(sub.srcUrl);
-
-                if (result.success) {
-                    if (result.retried) retrySuccessCount++;
-                    else successCount++;
-                } else {
+        try {
+            // 2. 逐个订阅源下载清单，收集所有插件 URL
+            const allPluginUrls: string[] = [];
+            for (const sub of subscription) {
+                try {
+                    const urls = await fetchPluginListFromManifest(sub.srcUrl);
+                    allPluginUrls.push(...urls);
+                } catch (e) {
+                    const err = e as Error;
                     failCount++;
-                    const reason = result.error?.message?.slice(0, 50) || "未知错误";
-                    failReasons.push(`${sub.srcUrl}：${reason}`);
+                    failReasons.push(`${sub.srcUrl}：清单获取失败 - ${err.message}`);
                 }
+            }
 
-                // 4. 实时刷新遮罩层上的进度文字
-                const current = successCount + retrySuccessCount + failCount;
-                setProgressText(
-                    `正在更新 ${current}/${total} 个订阅源...（成功 ${successCount + retrySuccessCount}，失败 ${failCount}）`,
-                );
+            // 插件URL去重
+            const uniquePluginUrls = [...new Set(allPluginUrls)];
+            if (uniquePluginUrls.length === 0) {
+                toast.warn("所有订阅清单都获取失败，没有可安装的插件。");
+                setIsUpdating(false);
+                setProgressText("");
+                return;
+            }
+
+            const total = uniquePluginUrls.length;
+            setProgressText(`正在安装 0/${total} 个插件...`);
+
+            // 3. 并发安装插件，上限 4
+            const queue = new PQueue({ concurrency: 4 });
+
+            uniquePluginUrls.forEach((url) => {
+                queue.add(async () => {
+                    const result = await installWithRetry(url);
+                    if (result.success) {
+                        if (result.retried) retrySuccessCount++;
+                        else successCount++;
+                    } else {
+                        failCount++;
+                        const reason = result.error?.message?.slice(0, 50) || "未知错误";
+                        failReasons.push(`${url}：${reason}`);
+                    }
+                    const current = successCount + retrySuccessCount + failCount;
+                    setProgressText(
+                        `正在安装 ${current}/${total} 个插件...（成功 ${successCount + retrySuccessCount}，失败 ${failCount}）`,
+                    );
+                });
             });
-        });
 
-        // 5. 等待所有任务结束
-        await queue.onIdle();
+            await queue.onIdle();
 
-        // 6. 弹出最终结果
-        const totalSuccess = successCount + retrySuccessCount;
-        if (failCount === 0) {
-            const retryMsg = retrySuccessCount > 0 ? `（其中 ${retrySuccessCount} 个经重试成功）` : "";
-            toast.success(`全部 ${totalSuccess} 个订阅源更新成功！${retryMsg}`);
-        } else {
-            const showList = failReasons.slice(0, 3);
-            const detailMsg = showList.length > 0
-                ? ` 失败：${showList.join(" | ")}${failReasons.length > 3 ? " ..." : ""}`
-                : "";
-            toast.warn(
-                `更新完成：成功 ${totalSuccess} 个（重试成功 ${retrySuccessCount} 个），失败 ${failCount} 个。${detailMsg}`,
-                { autoClose: 8000 },
-            );
+            // 4. 弹出最终结果
+            const totalSuccess = successCount + retrySuccessCount;
+            if (failCount === 0) {
+                const retryMsg = retrySuccessCount > 0 ? `（其中 ${retrySuccessCount} 个经重试成功）` : "";
+                toast.success(`全部 ${totalSuccess} 个插件安装成功！${retryMsg}`);
+            } else {
+                const showList = failReasons.slice(0, 3);
+                const detailMsg = showList.length > 0
+                    ? ` 失败：${showList.join(" | ")}${failReasons.length > 3 ? " ..." : ""}`
+                    : "";
+                toast.warn(
+                    `安装完成：成功 ${totalSuccess} 个（重试成功 ${retrySuccessCount} 个），失败 ${failCount} 个。${detailMsg}`,
+                    { autoClose: 8000 },
+                );
+            }
+        } catch (e) {
+            const err = e as Error;
+            toast.warn(`更新失败：${err.message}`);
+        } finally {
+            setIsUpdating(false);
+            setProgressText("");
         }
-
-        setIsUpdating(false);
-        setProgressText("");
     };
 
     return (
@@ -214,7 +260,7 @@ export default function PluginManagerView() {
                     >
                         {t("plugin_management_page.subscription_setting")}
                     </div>
-                    {/* ============ 更新订阅：读取已保存订阅，一键安装所有插件 ============ */}
+                    {/* ============ 更新订阅：读取已保存订阅，解析清单，一键安装所有插件 ============ */}
                     <div
                         role="button"
                         data-type="normalButton"
