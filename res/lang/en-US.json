@@ -102,6 +102,7 @@
     "info_hint_install_plugin": "Plugins must comply with the MusicFree plugin protocol. For details, visit the <a>official website</a>",
     "subscription_setting": "Subscription Settings",
     "update_subscription": "Update Subscription",
+    "updating": "Updating...",
     "update_successfully": "Update Successful",
     "no_subscription": "No Current Subscriptions",
 
