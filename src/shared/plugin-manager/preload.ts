@@ -52,6 +52,18 @@ async function installPluginFromLocal(url: string) {
     return await ipcRenderer.invoke("@shared/plugin-manager/install-plugin-local", url);
 }
 
+// 新增：批量更新订阅，主进程后台执行
+async function updateSubscription(urls: string[]) {
+    return await ipcRenderer.invoke("@shared/plugin-manager/update-subscription", urls);
+}
+
+// 新增：监听主进程推送的进度
+function onUpdateProgress(callback: (text: string) => void) {
+    const listener = (_evt: any, text: string) => callback(text);
+    ipcRenderer.on("@shared/plugin-manager/update-progress", listener);
+    return () => ipcRenderer.off("@shared/plugin-manager/update-progress", listener);
+}
+
 const mod = {
     onPluginUpdated,
     callPluginMethod,
@@ -60,6 +72,8 @@ const mod = {
     updateAllPlugins,
     installPluginFromLocal,
     installPluginFromRemote,
+    updateSubscription,
+    onUpdateProgress,
 };
 
 contextBridge.exposeInMainWorld("@shared/plugin-manager", mod);
