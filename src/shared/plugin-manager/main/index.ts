@@ -375,7 +375,7 @@ class PluginManager {
                     }
                 }
             } catch (e) {
-                logger.logError("插件加载失败", e);
+                logger.logError("插件加载失败", e as Error);
             }
         }
         this.plugins = plugins;
@@ -500,9 +500,9 @@ class PluginManager {
     /** 保存订阅状态 */
     private setSubscriptionState(state: Record<string, string[]>) {
         try {
-            AppConfig.setConfig(SUBSCRIBE_STATE_KEY as any, state as any);
+            AppConfig.setConfig({ [SUBSCRIBE_STATE_KEY]: state } as any);
         } catch (e) {
-            logger.logError("保存订阅状态失败", e);
+            logger.logError("保存订阅状态失败", e as Error);
         }
     }
 
@@ -515,7 +515,7 @@ class PluginManager {
                 return true;
             }
         } catch (e) {
-            logger.logError("卸载插件失败", srcUrl, e);
+            logger.logError(`卸载插件失败: ${srcUrl}`, e as Error);
         }
         return false;
     }
