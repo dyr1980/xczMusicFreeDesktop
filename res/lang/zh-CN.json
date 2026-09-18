@@ -92,6 +92,7 @@
     "info_hint_install_plugin": "插件需要满足 MusicFree 特定的插件协议，具体可在<a>官方网站</a>中查看",
     "subscription_setting": "订阅设置",
     "update_subscription": "更新订阅",
+    "updating": "更新中...",
     "update_successfully": "更新成功",
     "no_subscription": "当前无订阅",
     "uninstall": "卸载",
