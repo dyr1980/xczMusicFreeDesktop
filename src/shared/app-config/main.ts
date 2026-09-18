@@ -25,7 +25,6 @@ class AppConfig {
 
 
     private async checkPath() {
-        // 1. Check dir
         const configDirPath = app.getPath("userData");
 
         try {
@@ -40,7 +39,6 @@ class AppConfig {
             });
         }
 
-        // 2. Check file
         try {
             const res = await fs.stat(this.configPath);
             if (!res.isFile()) {
@@ -59,16 +57,13 @@ class AppConfig {
         await this.loadConfig();
 
         // Bind events
-        // sync config
         ipcMain.handle("@shared/app-config/sync-app-config", () => {
             return this.config;
         });
 
         ipcMain.on("@shared/app-config/set-app-config", (_rawEvt, data: IAppConfig) => {
-            /**
-             * data: {key: value}
-             */
-            this._setConfig(data, "renderer");
+            // ⭐ 不 await，立刻返回
+            this._setConfig(data, "renderer").catch(e => logger.logError("设置配置失败", e));
         });
 
         ipcMain.on("@shared/app-config/reset", () => {
@@ -88,7 +83,6 @@ class AppConfig {
         if (this.config["$schema-version"] >= 0) {
             return;
         }
-        // 1. 升级到v1
         try {
             const oldConfig = this.config as any;
             const newConfig: any = {
@@ -157,9 +151,10 @@ class AppConfig {
                 }
             }
             const rawConfig = JSON.stringify(newConfig, undefined, 4);
-            originalFs.writeFileSync(this.configPath, rawConfig, "utf-8");
+            // ⭐ 改成异步写
+            await fs.writeFile(this.configPath, rawConfig, "utf-8");
         } catch (e) {
-            logger.logError("迁移旧版配置失败", e);
+            logger.logError("迁移旧版配置失败", e as Error);
         }
     }
 
@@ -170,20 +165,17 @@ class AppConfig {
             } else {
                 const rawConfig = await fs.readFile(this.configPath, "utf8");
                 this.config = JSON.parse(rawConfig);
-                // 升级旧版设置
                 await this.migrateOldVersionConfig();
                 this.config = {
                     ..._defaultAppConfig,
                     ...this.config,
                 };
             }
-        } catch (e) {
+        } catch (e: any) {
             if (e.message === "Unexpected end of JSON input" || e.code === "EISDIR") {
-                // JSON 解析异常 / 非文件
                 await rimraf(this.configPath);
                 await this.checkPath();
             } else if (e.code === "ENOENT") {
-                // 文件不存在
                 await this.checkPath();
             }
             this.config = { ..._defaultAppConfig };
@@ -205,27 +197,24 @@ class AppConfig {
     }
 
     public setConfig(data: IAppConfig) {
-        this._setConfig(data, "main");
+        // ⭐ 不 await，立刻返回
+        this._setConfig(data, "main").catch(e => logger.logError("设置配置失败", e));
     }
 
-    private _setConfig(data: IAppConfig, from: "main" | "renderer") {
+    private async _setConfig(data: IAppConfig, from: "main" | "renderer") {
         try {
-            // 1. Merge old one
             this.config = { ..._defaultAppConfig, ...this.config, ...data };
-            // 2. Save to file
             const rawConfig = JSON.stringify(this.config, undefined, 4);
-            originalFs.writeFileSync(this.configPath, rawConfig, "utf-8");
-            // 3. Notify to all windows
+            // ⭐ 改成异步写
+            await fs.writeFile(this.configPath, rawConfig, "utf-8");
             this.windowManager.getAllWindows().forEach((window) => {
                 window.webContents.send("@shared/app-config/update-app-config", data);
             });
-
             this.onAppConfigUpdatedCallbacks.forEach((callback) => {
                 callback(data, this.config, from);
             });
-
         } catch (e) {
-            logger.logError("设置配置失败", e);
+            logger.logError("设置配置失败", e as Error);
         }
     }
 
