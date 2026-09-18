@@ -8,7 +8,8 @@ import { Trans, useTranslation } from "react-i18next";
 import { dialogUtil } from "@shared/utils/renderer";
 import PluginManager from "@shared/plugin-manager/renderer";
 import { useState } from "react";
-import PQueue from "p-queue"; // 使用项目已有的 p-queue 库
+import PQueue from "p-queue";
+
 // 判断是否为网络临时错误（需要重试）
 function isTemporaryNetworkError(err: unknown): boolean {
     if (!err) return false;
@@ -21,13 +22,16 @@ function isTemporaryNetworkError(err: unknown): boolean {
         || msg.includes("503")
         || msg.includes("504");
 }
+
 export default function PluginManagerView() {
     const { t } = useTranslation();
     const [isUpdating, setIsUpdating] = useState(false);
-    // 可配置参数
+    const [progressText, setProgressText] = useState("");
+
     const MAX_RETRY = 2;
     const RETRY_DELAY = 800;
-    // 带重试包装函数，返回 { success: boolean, retried: boolean, error?: Error }
+
+    // 带重试包装函数
     async function installWithRetry(url: string): Promise<{
         success: boolean;
         retried: boolean;
@@ -51,77 +55,75 @@ export default function PluginManagerView() {
         }
         return { success: false, retried, error: new Error("未知错误") };
     }
-    // 更新订阅的函数
+
+    // ============ 核心：读取已保存订阅，一键安装所有插件 ============
     const handleUpdateAllSubscriptions = async () => {
+        // 1. 读取用户在“订阅设置”里保存的所有订阅链接
         const subscription = getUserPreference("subscription");
         if (!subscription?.length) {
             toast.warn(t("plugin_management_page.no_subscription"));
             return;
         }
+
         setIsUpdating(true);
-        // 1. 并发队列，上限 4
+        setProgressText(`正在更新 0/${subscription.length} 个订阅源...`);
+
+        // 2. 并发控制：最多同时请求 4 个订阅源
         const queue = new PQueue({ concurrency: 4 });
-        // 统计
+
         let successCount = 0;      // 直接成功
         let retrySuccessCount = 0; // 重试后成功
         let failCount = 0;         // 最终失败
-        const failReasons: string[] = []; // 失败原因摘要
+        const failReasons: string[] = [];
         const total = subscription.length;
-        // 2. 初始加载提示
-        const toastId = toast.loading(`正在更新 0/${total} 个订阅源...`);
-        // 3. 遍历订阅源，加入队列
+
+        // 3. 把每个订阅源作为独立任务加入队列
         subscription.forEach((sub) => {
             queue.add(async () => {
+                // 调用 PluginManager.installPluginFromRemote(url)
+                // 如果 url 是订阅源 JSON，它会自动解析并安装里面所有插件
                 const result = await installWithRetry(sub.srcUrl);
+
                 if (result.success) {
-                    if (result.retried) {
-                        retrySuccessCount++;
-                    } else {
-                        successCount++;
-                    }
+                    if (result.retried) retrySuccessCount++;
+                    else successCount++;
                 } else {
                     failCount++;
-                    // 记录失败原因（截取前 50 字符，避免太长）
                     const reason = result.error?.message?.slice(0, 50) || "未知错误";
                     failReasons.push(`${sub.srcUrl}：${reason}`);
                 }
-                // 4. 实时更新进度
+
+                // 4. 实时刷新遮罩层上的进度文字
                 const current = successCount + retrySuccessCount + failCount;
-                if (current <= total) {
-                    toast.update(toastId, {
-                        render: `正在更新 ${current}/${total} 个订阅源...（成功 ${successCount + retrySuccessCount}，失败 ${failCount}）`,
-                    });
-                }
+                setProgressText(
+                    `正在更新 ${current}/${total} 个订阅源...（成功 ${successCount + retrySuccessCount}，失败 ${failCount}）`,
+                );
             });
         });
-        // 5. 等待所有任务完成
+
+        // 5. 等待所有任务结束
         await queue.onIdle();
-        // 6. 最终结果提示
+
+        // 6. 弹出最终结果
         const totalSuccess = successCount + retrySuccessCount;
         if (failCount === 0) {
-            // 全部成功
             const retryMsg = retrySuccessCount > 0 ? `（其中 ${retrySuccessCount} 个经重试成功）` : "";
-            toast.update(toastId, {
-                render: `全部 ${totalSuccess} 个订阅源更新成功！${retryMsg}`,
-                type: "success",
-                isLoading: false,
-                autoClose: 3000,
-            });
+            toast.success(`全部 ${totalSuccess} 个订阅源更新成功！${retryMsg}`);
         } else {
-            // 有失败，改用 | 分隔，避免 \n 无效换行
             const showList = failReasons.slice(0, 3);
             const detailMsg = showList.length > 0
                 ? ` 失败：${showList.join(" | ")}${failReasons.length > 3 ? " ..." : ""}`
                 : "";
-            toast.update(toastId, {
-                render: `更新完成：成功 ${totalSuccess} 个（重试成功 ${retrySuccessCount} 个），失败 ${failCount} 个。${detailMsg}`,
-                type: "warning",
-                isLoading: false,
-                autoClose: 8000,
-            });
+            toast.warn(
+                `更新完成：成功 ${totalSuccess} 个（重试成功 ${retrySuccessCount} 个），失败 ${failCount} 个。${detailMsg}`,
+                { autoClose: 8000 },
+            );
         }
+
         setIsUpdating(false);
+        setProgressText("");
     };
+
     return (
         <div
             id="page-container"
@@ -147,9 +149,7 @@ export default function PluginManagerView() {
                                         },
                                     ],
                                 });
-                                if (result.canceled) {
-                                    return;
-                                }
+                                if (result.canceled) return;
                                 await PluginManager.installPluginFromLocal(result.filePaths[0]);
                                 toast.success(t("plugin_management_page.install_successfully"));
                             } catch (e) {
@@ -170,30 +170,19 @@ export default function PluginManagerView() {
                         onClick={() => {
                             showModal("SimpleInputWithState", {
                                 title: t("plugin_management_page.install_plugin_from_network"),
-                                placeholder: t(
-                                    "plugin_management_page.error_hint_plugin_should_end_with_js_or_json",
-                                ),
+                                placeholder: t("plugin_management_page.error_hint_plugin_should_end_with_js_or_json"),
                                 okText: t("plugin_management_page.install"),
                                 loadingText: t("plugin_management_page.installing"),
                                 withLoading: true,
                                 async onOk(text: string) {
-                                    if (
-                                        text.trim().endsWith(".json") ||
-                                        text.trim().endsWith(".js")
-                                    ) {
+                                    if (text.trim().endsWith(".json") || text.trim().endsWith(".js")) {
                                         return PluginManager.installPluginFromRemote(text);
                                     } else {
-                                        throw new Error(
-                                            t(
-                                                "plugin_management_page.error_hint_plugin_should_end_with_js_or_json",
-                                            ),
-                                        );
+                                        throw new Error(t("plugin_management_page.error_hint_plugin_should_end_with_js_or_json"));
                                     }
                                 },
                                 onPromiseResolved() {
-                                    toast.success(
-                                        t("plugin_management_page.install_successfully"),
-                                    );
+                                    toast.success(t("plugin_management_page.install_successfully"));
                                     hideModal();
                                 },
                                 onPromiseRejected(e: Error) {
@@ -206,9 +195,7 @@ export default function PluginManagerView() {
                                 hints: [
                                     <Trans
                                         i18nKey={"plugin_management_page.info_hint_install_plugin"}
-                                        components={{
-                                            a: <A href="https://musicfree.catcat.work"></A>,
-                                        }}
+                                        components={{ a: <A href="https://musicfree.catcat.work"></A> }}
                                     ></Trans>,
                                 ],
                             });
@@ -227,12 +214,13 @@ export default function PluginManagerView() {
                     >
                         {t("plugin_management_page.subscription_setting")}
                     </div>
+                    {/* ============ 更新订阅：读取已保存订阅，一键安装所有插件 ============ */}
                     <div
                         role="button"
                         data-type="normalButton"
                         style={{
                             opacity: isUpdating ? 0.5 : 1,
-                            pointerEvents: isUpdating ? "none" : "auto"
+                            pointerEvents: isUpdating ? "none" : "auto",
                         }}
                         onClick={handleUpdateAllSubscriptions}
                     >
@@ -241,6 +229,43 @@ export default function PluginManagerView() {
                 </div>
             </div>
             <PluginTable></PluginTable>
+
+            {/* ============ 全屏 Loading 遮罩 ============ */}
+            {isUpdating && (
+                <div style={{
+                    position: "fixed",
+                    top: 0, left: 0, right: 0, bottom: 0,
+                    backgroundColor: "rgba(255, 255, 255, 0.75)",
+                    display: "flex",
+                    flexDirection: "column",
+                    justifyContent: "center",
+                    alignItems: "center",
+                    zIndex: 9999,
+                    backdropFilter: "blur(2px)",
+                }}>
+                    <div style={{
+                        width: "48px",
+                        height: "48px",
+                        border: "5px solid #f17d34",
+                        borderTopColor: "transparent",
+                        borderRadius: "50%",
+                        animation: "spin 1s linear infinite",
+                        marginBottom: "16px",
+                    }} />
+                    <div style={{ fontSize: "16px", color: "#333", fontWeight: 500 }}>
+                        {progressText}
+                    </div>
+                    <div style={{ fontSize: "13px", color: "#888", marginTop: "8px" }}>
+                        请勿关闭窗口，安装完成后会自动消失
+                    </div>
+                    <style>{`
+                        @keyframes spin {
+                            0% { transform: rotate(0deg); }
+                            100% { transform: rotate(360deg); }
+                        }
+                    `}</style>
+                </div>
+            )}
         </div>
     );
 }
